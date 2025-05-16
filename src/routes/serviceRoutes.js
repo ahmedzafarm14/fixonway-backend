@@ -48,9 +48,8 @@ router.put("/update-service/:id", async (req, res) => {
 });
 
 router.put("/update-location/:id", async (req, res) => {
-  const { id } = req.params.id;
+  const { id } = req.params;
   const { location } = req.body;
-  console.log("this is location:", location);
   console.log("this is id:", id);
   try {
     await User.findByIdAndUpdate(id, {
