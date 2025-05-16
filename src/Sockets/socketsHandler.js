@@ -1,16 +1,15 @@
 import mongoose from "mongoose";
 import Chat from "../models/ChatModel.js";
 import Message from "../models/MessageModel.js";
-import { getIO } from "./socketInstance.js";
 import User from "../models/User.js";
+import { getIO } from "./socketInstance.js";
 
 export const registerChatHandlers = (socket) => {
   console.log("User connected:", socket.id);
 
-  // 1. Join a chat room
+  // 1. Join a Chat Room
   socket.on("joinChat", async ({ userId, otherUserId }) => {
     try {
-      // Validate ObjectId format
       if (
         !mongoose.Types.ObjectId.isValid(userId) ||
         !mongoose.Types.ObjectId.isValid(otherUserId)
@@ -18,123 +17,104 @@ export const registerChatHandlers = (socket) => {
         throw new Error("Invalid user IDs");
       }
 
-      const userObjectId = new mongoose.Types.ObjectId(userId);
-      const otherUserObjectId = new mongoose.Types.ObjectId(otherUserId);
-
-      // Sort participant IDs to keep consistent order
-      const sortedIds = [userObjectId, otherUserObjectId].sort((a, b) =>
-        a.toString().localeCompare(b.toString())
+      const sortedIds = [userId, otherUserId].sort();
+      let chat = await Chat.findOne({ participants: sortedIds }).populate(
+        "lastMessage"
       );
 
-      // Check if a chat already exists
-      let chat = await Chat.findOne({ participants: sortedIds })
-        .populate("lastMessage") // optional
-        .exec();
-
       if (!chat) {
-        // Create new chat if it doesn't exist
         chat = await Chat.create({ participants: sortedIds });
       }
 
-      // Get the full user info for the opposite participant
       const oppositeUserId =
-        userId === sortedIds[0].toString() ? sortedIds[1] : sortedIds[0];
+        userId === sortedIds[0] ? sortedIds[1] : sortedIds[0];
       const oppositeUser = await User.findById(oppositeUserId).select(
         "_id fullName email"
       );
 
-      // Optionally load messages (remove if not needed)
-      const messages = await Message.find({ chat: chat._id }).sort({
-        createdAt: 1,
-      });
+      const messages = await Message.find({ chat: chat._id })
+        .populate("sender", "_id fullName")
+        .populate("deliveredTo", "_id fullName")
+        .sort({ createdAt: 1 });
 
-      // Format response
-      const chatData = {
+      socket.join(chat._id.toString());
+
+      socket.emit("chatJoined", {
         chatId: chat._id,
         oppositeUser,
         lastMessage: chat.lastMessage || null,
         messages,
-      };
-
-      socket.join(chat._id.toString());
-      socket.emit("chatJoined", chatData);
+      });
     } catch (error) {
       console.error("Error joining chat:", error);
       socket.emit("error", "Could not join chat.");
     }
   });
 
-  // 2. Send message
+  // 2. Send Message
   socket.on(
     "sendMessage",
-    async ({ chatId, senderId, content, messageType, attachments }) => {
+    async ({ chatId, sender, content, deliveredToPerson }) => {
       try {
-        const senderObjectId = new mongoose.Types.ObjectId(senderId);
-        const chatObjectId = new mongoose.Types.ObjectId(chatId);
+        if (
+          !mongoose.Types.ObjectId.isValid(chatId) ||
+          !mongoose.Types.ObjectId.isValid(sender._id) ||
+          !mongoose.Types.ObjectId.isValid(deliveredToPerson)
+        ) {
+          throw new Error("Invalid ObjectIds in sendMessage");
+        }
 
         const message = await Message.create({
-          chat: chatObjectId,
-          sender: senderObjectId,
+          chat: chatId,
+          sender: sender._id,
           content,
-          messageType,
-          attachments,
-          isDelivered: false,
-          isRead: false,
+          deliveredTo: [deliveredToPerson],
         });
 
-        await Chat.findByIdAndUpdate(chatObjectId, {
+        // Update chat's last message
+        await Chat.findByIdAndUpdate(chatId, {
           lastMessage: message._id,
         });
 
+        // Populate message for frontend use
+        const populatedMsg = await Message.findById(message._id)
+          .populate("sender", "_id fullName")
+          .populate("deliveredTo", "_id fullName");
+
         const io = getIO();
-        io.to(chatId).emit("newMessage", message);
-      } catch (err) {
-        console.error("sendMessage error:", err);
+        io.to(chatId).emit("newMessage", {
+          _id: populatedMsg._id,
+          chatId: chatId,
+          senderId: populatedMsg.sender._id,
+          content: populatedMsg.content,
+          deliveredTo: populatedMsg.deliveredTo,
+          createdAt: populatedMsg.createdAt,
+        });
+      } catch (error) {
+        console.error("sendMessage error:", error);
         socket.emit("error", "Message could not be sent.");
       }
     }
   );
 
-  // 3. Mark as Delivered
-  socket.on("messageDelivered", async ({ messageId }) => {
-    try {
-      await Message.findByIdAndUpdate(messageId, { isDelivered: true });
-    } catch (err) {
-      console.error("messageDelivered error:", err);
-    }
-  });
-
-  // 4. Mark as Read
-  socket.on("messageRead", async ({ messageId }) => {
-    try {
-      await Message.findByIdAndUpdate(messageId, { isRead: true });
-    } catch (err) {
-      console.error("messageRead error:", err);
-    }
-  });
-
-  // 5. Get chat messages
+  // 3. Get Messages by Chat ID (Fallback if frontend doesn't have them)
   socket.on("getMessages", async ({ chatId }) => {
     try {
-      const messages = await Message.find({ chat: chatId }).sort({
-        createdAt: 1,
-      });
+      const messages = await Message.find({ chat: chatId })
+        .populate("sender", "_id fullName")
+        .populate("deliveredTo", "_id fullName")
+        .sort({ createdAt: 1 });
+
       socket.emit("chatMessages", messages);
-    } catch (err) {
-      console.error("getMessages error:", err);
+    } catch (error) {
+      console.error("getMessages error:", error);
       socket.emit("error", "Could not fetch messages.");
     }
   });
 
-  // 6. Disconnect
-  socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
-  });
-
-  // 7. Get all chats
+  // 4. Get All Chats for a User
   socket.on("getAllChats", async ({ userId }) => {
     try {
-      // Fetch all chats involving the user
       const chats = await Chat.find({ participants: userId })
         .populate({
           path: "participants",
@@ -144,20 +124,18 @@ export const registerChatHandlers = (socket) => {
           path: "lastMessage",
           populate: {
             path: "sender deliveredTo",
-            select: "_id fullName email",
+            select: "_id fullName",
           },
         })
-        .lean(); // use lean for better performance and mutability
+        .lean();
 
-      // Fetch all messages for these chats
       const chatIds = chats.map((chat) => chat._id);
       const messages = await Message.find({ chat: { $in: chatIds } })
-        .populate("sender", "_id fullName email")
-        .populate("deliveredTo", "_id fullName email")
+        .populate("sender", "_id fullName")
+        .populate("deliveredTo", "_id fullName")
         .sort({ createdAt: 1 })
         .lean();
 
-      // Map messages by chat
       const messagesByChat = {};
       for (const msg of messages) {
         const chatIdStr = msg.chat.toString();
@@ -165,7 +143,6 @@ export const registerChatHandlers = (socket) => {
         messagesByChat[chatIdStr].push(msg);
       }
 
-      // Prepare final chat response
       const chatData = chats.map((chat) => {
         const oppositeUser = chat.participants.find(
           (p) => p._id.toString() !== userId
@@ -186,12 +163,11 @@ export const registerChatHandlers = (socket) => {
                   _id: chat.lastMessage.sender?._id,
                   fullName: chat.lastMessage.sender?.fullName,
                 },
-                deliveredTo: chat.lastMessage.deliveredTo?.map((user) => ({
-                  _id: user._id,
-                  fullName: user.fullName,
+                deliveredTo: chat.lastMessage.deliveredTo?.map((u) => ({
+                  _id: u._id,
+                  fullName: u.fullName,
                 })),
                 createdAt: chat.lastMessage.createdAt,
-                messageType: chat.lastMessage.messageType,
               }
             : null,
           messages: messagesByChat[chat._id.toString()] || [],
@@ -200,8 +176,13 @@ export const registerChatHandlers = (socket) => {
 
       socket.emit("allChats", chatData);
     } catch (error) {
-      console.error("Error fetching chats:", error);
+      console.error("getAllChats error:", error);
       socket.emit("chatError", { message: "Failed to fetch chats" });
     }
+  });
+
+  // 5. Disconnect
+  socket.on("disconnect", () => {
+    console.log("User disconnected:", socket.id);
   });
 };
