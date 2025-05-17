@@ -6,6 +6,7 @@ import { Server } from "socket.io";
 import { createServer } from "http";
 import { setIO } from "./Sockets/socketInstance.js";
 import { registerChatHandlers } from "./Sockets/socketsHandler.js";
+import corsOptions from "./config/cors.js";
 
 dotenv.config();
 const PORT = process.env.PORT || 3001;
@@ -15,10 +16,7 @@ const startServer = async () => {
     await dbConnection();
     const httpServer = createServer(app);
     const io = new Server(httpServer, {
-      cors: {
-        origin: `${process.env.FRONTEND_BASE_URL}`,
-        methods: ["GET", "POST"],
-      },
+      cors: corsOptions,
     });
     setIO(io);
     io.on("connection", (socket) => {
