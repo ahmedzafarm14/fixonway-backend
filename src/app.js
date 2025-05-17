@@ -5,6 +5,7 @@ import logger from "./middleware/logger.js";
 import authRoutes from "./routes/authRoutes.js";
 import serviceRoutes from "./routes/serviceRoutes.js";
 import servicesTypesRoutes from "./routes/servicesTypesRoutes.js";
+import corsOptions from "./config/cors.js";
 
 const app = express();
 // Parse JSON requests
@@ -13,13 +14,7 @@ app.use(express.json());
 app.use(logger);
 
 // Enable CORS with specified options
-app.use(
-  cors({
-    origin: ["https://fixonway.netlify.app"],
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
+app.use(cors(corsOptions));
 app.get("/", (req, res) => {
   res.status(200).json({ message: "Welcome to the Fixonway" });
 });
