@@ -13,7 +13,13 @@ app.use(express.json());
 app.use(logger);
 
 // Enable CORS with specified options
-app.use(cors());
+app.use(
+  cors({
+    origin: ["https://fixonway.netlify.app"],
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 app.get("/", (req, res) => {
   res.status(200).json({ message: "Welcome to the Fixonway" });
 });
