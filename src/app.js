@@ -5,7 +5,7 @@ import logger from "./middleware/logger.js";
 import authRoutes from "./routes/authRoutes.js";
 import serviceRoutes from "./routes/serviceRoutes.js";
 import servicesTypesRoutes from "./routes/servicesTypesRoutes.js";
-import corsOptions from "./config/cors.js";
+import { corsOptions } from "./config/cors.js";
 
 const app = express();
 // Parse JSON requests

@@ -6,7 +6,7 @@ import { Server } from "socket.io";
 import { createServer } from "http";
 import { setIO } from "./Sockets/socketInstance.js";
 import { registerChatHandlers } from "./Sockets/socketsHandler.js";
-import corsOptions from "./config/cors.js";
+import { corsOptions } from "./config/cors.js";
 
 dotenv.config();
 const PORT = process.env.PORT || 3001;
